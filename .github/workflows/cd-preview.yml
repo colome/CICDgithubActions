@@ -1,0 +1,90 @@
+name: CD Preview (PR)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+concurrency:
+  group: preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    name: Preview Deploy
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    environment:
+      name: preview
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+      - name: Deploy preview (Render)
+        id: deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_PREVIEW_SERVICE_ID }}
+        run: |
+          chmod +x scripts/render-deploy.sh scripts/healthcheck.sh
+          ./scripts/render-deploy.sh
+          URL="${{ vars.API_URL }}"
+          if [ -z "$URL" ]; then
+            URL="${{ secrets.PREVIEW_BASE_URL }}"
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          export BASE_URL="$URL"
+          export RETRIES=18
+          ./scripts/healthcheck.sh
+
+      - name: Comment preview URL on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.deploy.outputs.url }}';
+            const body = `## Preview deploy\n\n🔗 **URL:** ${url || '(configura vars.API_URL o PREVIEW_BASE_URL)'}\n\n- PR: #${{ github.event.pull_request.number }}\n- SHA: \`${{ github.sha }}\`\n- Health: \`${url}/health\``;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const marker = '## Preview deploy';
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  cleanup:
+    name: Preview cleanup note
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note
+        run: |
+          echo "PR closed — Render preview service se reutiliza; limpia el servicio en el dashboard si aplica."
+          echo "PR #${{ github.event.pull_request.number }} closed" >> "$GITHUB_STEP_SUMMARY"

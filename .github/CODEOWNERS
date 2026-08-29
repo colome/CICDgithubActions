@@ -1,0 +1,3 @@
+# Ajusta al handle de GitHub de tu equipo
+.github/workflows/ @*
+CODEOWNERS @*

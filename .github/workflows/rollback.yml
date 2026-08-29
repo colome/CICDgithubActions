@@ -1,0 +1,84 @@
+name: Rollback Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag/release a restaurar (ej. v20250829-abc1234)"
+        required: true
+        type: string
+      confirm:
+        description: "Escribe rollback-prod para confirmar"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm
+        run: |
+          if [ "${{ inputs.confirm }}" != "rollback-prod" ]; then
+            echo "Debes escribir exactamente: rollback-prod"
+            exit 1
+          fi
+
+  rollback:
+    name: Rollback
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.API_URL }}
+    steps:
+      - name: Checkout version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version }}
+
+      - name: Summary
+        run: |
+          {
+            echo "## Rollback"
+            echo "- Target version: \`${{ inputs.version }}\`"
+            echo "- Actor: \`$GITHUB_ACTOR\`"
+            echo "- URL: ${{ vars.API_URL }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy previous version (Render)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_PRODUCTION_SERVICE_ID }}
+        run: |
+          # Render redeploy del commit asociado al tag (el servicio debe estar
+          # conectado al mismo repo; el checkout asegura el SHA correcto en Actions).
+          chmod +x scripts/render-deploy.sh
+          ./scripts/render-deploy.sh
+
+      - name: Health check post-rollback
+        env:
+          BASE_URL: ${{ vars.API_URL }}
+          RETRIES: "24"
+          SLEEP_SECS: "10"
+        run: |
+          chmod +x scripts/healthcheck.sh
+          ./scripts/healthcheck.sh
+
+      - name: Notify Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          chmod +x scripts/notify-slack.sh
+          if [ "${{ job.status }}" = "success" ]; then
+            ./scripts/notify-slack.sh rollback "Rollback completado" "Version: ${{ inputs.version }} | URL: ${{ vars.API_URL }}"
+          else
+            ./scripts/notify-slack.sh failure "Rollback FAILED" "Version: ${{ inputs.version }}"
+          fi

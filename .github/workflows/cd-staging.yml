@@ -1,0 +1,95 @@
+name: CD Staging
+
+# Se dispara cuando CI termina con éxito en main
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy-staging:
+    name: Deploy Staging
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.API_URL }}
+    outputs:
+      url: ${{ steps.meta.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Meta
+        id: meta
+        run: |
+          URL="${{ vars.API_URL }}"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## Staging deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SHA: \`${{ github.event.workflow_run.head_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: $URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy to Render (staging)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_STAGING_SERVICE_ID }}
+        run: |
+          chmod +x scripts/render-deploy.sh
+          ./scripts/render-deploy.sh
+
+      - name: Health check
+        env:
+          BASE_URL: ${{ vars.API_URL }}
+          RETRIES: "18"
+          SLEEP_SECS: "10"
+        run: |
+          chmod +x scripts/healthcheck.sh
+          ./scripts/healthcheck.sh
+
+  smoke-tests:
+    name: Smoke Tests
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run smoke tests
+        env:
+          BASE_URL: ${{ needs.deploy-staging.outputs.url }}
+        run: node scripts/smoke.js
+
+  notify:
+    name: Notify Slack
+    needs: [deploy-staging, smoke-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          chmod +x scripts/notify-slack.sh
+          if [ "${{ needs.smoke-tests.result }}" = "success" ]; then
+            ./scripts/notify-slack.sh success "Staging deploy OK" "URL: ${{ needs.deploy-staging.outputs.url }}"
+          else
+            ./scripts/notify-slack.sh failure "Staging deploy FAILED" "Check Actions run ${{ github.run_id }}"
+          fi

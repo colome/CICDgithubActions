@@ -1,0 +1,110 @@
+name: CD Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Escribe deploy-prod para confirmar"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm input
+        run: |
+          if [ "${{ inputs.confirm }}" != "deploy-prod" ]; then
+            echo "Debes escribir exactamente: deploy-prod"
+            exit 1
+          fi
+
+  deploy-production:
+    name: Deploy Production
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.API_URL }}
+    outputs:
+      url: ${{ steps.meta.outputs.url }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Meta
+        id: meta
+        run: |
+          VERSION="v$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "url=${{ vars.API_URL }}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Production deploy"
+            echo "- Version: \`$VERSION\`"
+            echo "- SHA: \`$GITHUB_SHA\`"
+            echo "- Actor: \`$GITHUB_ACTOR\`"
+            echo "- URL: ${{ vars.API_URL }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy to Render (production)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_PRODUCTION_SERVICE_ID }}
+        run: |
+          chmod +x scripts/render-deploy.sh
+          ./scripts/render-deploy.sh
+
+      - name: Health check (retries)
+        env:
+          BASE_URL: ${{ vars.API_URL }}
+          RETRIES: "24"
+          SLEEP_SECS: "10"
+        run: |
+          chmod +x scripts/healthcheck.sh
+          ./scripts/healthcheck.sh
+
+  create-release:
+    name: Create GitHub Release
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.deploy-production.outputs.version }}"
+          gh release create "$VERSION" \
+            --title "Production $VERSION" \
+            --notes "Deployed to production by @${{ github.actor }}
+
+          - SHA: \`${{ github.sha }}\`
+          - URL: ${{ needs.deploy-production.outputs.url }}
+          - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --target "${{ github.sha }}"
+
+  notify:
+    name: Notify Slack
+    needs: [deploy-production, create-release]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          chmod +x scripts/notify-slack.sh
+          if [ "${{ needs.deploy-production.result }}" = "success" ] && [ "${{ needs.create-release.result }}" = "success" ]; then
+            ./scripts/notify-slack.sh success "Production deploy OK" "Version: ${{ needs.deploy-production.outputs.version }} | URL: ${{ needs.deploy-production.outputs.url }}"
+          else
+            ./scripts/notify-slack.sh failure "Production deploy FAILED" "Run ${{ github.run_id }}"
+          fi
