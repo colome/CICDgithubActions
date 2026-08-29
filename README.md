@@ -69,8 +69,8 @@ docker run --rm -p 3000:3000 mi-cd-pipeline
 - [x] Rollback workflow
 - [x] Docker + GHCR + cache
 - [x] Concurrency control por environment
-- [ ] Configurar Environments + branch protection en GitHub (manual)
-- [ ] Crear servicios en Render y pegar IDs/tokens como secrets
+- [x] Configurar Environments + branch protection en GitHub (manual)
+- [x] Crear servicios en Render y pegar IDs/tokens como secrets
 
 ## Licencia
 
