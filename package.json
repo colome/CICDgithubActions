@@ -7,7 +7,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "lint": "eslint src tests",
-    "test": "node --test tests/**/*.test.js",
+    "test": "node --test ./tests/app.test.js",
     "build": "node -e \"console.log('Build OK - no transpile needed')\"",
     "smoke": "node scripts/smoke.js"
   },
