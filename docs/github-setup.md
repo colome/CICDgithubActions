@@ -1,34 +1,44 @@
-# Docs de configuración (no contiene secretos)
-# Copia estos valores en GitHub → Settings → Environments / Secrets
+# GitHub setup — estado aplicado
 
-## Repository secrets
-# RENDER_API_KEY
-# RENDER_STAGING_SERVICE_ID
-# RENDER_PRODUCTION_SERVICE_ID
-# RENDER_PREVIEW_SERVICE_ID
-# SLACK_WEBHOOK_URL
-# PREVIEW_BASE_URL (opcional si no usas vars del env preview)
+Repo: https://github.com/colome/CICDgithubActions (público)
 
-## Environment: staging
-# Protection: Deployment branches = main (sin required reviewers)
-# Variables:
-#   API_URL=https://mi-cd-pipeline-staging.onrender.com
-#   NODE_ENV=staging
-# Secrets (opcionales):
-#   DATABASE_URL=...
+## Hecho automáticamente
 
-## Environment: production
-# Protection: Required reviewers + Wait timer 5 min + Deployment branches = main
-# Variables:
-#   API_URL=https://mi-cd-pipeline.onrender.com
-#   NODE_ENV=production
-# Secrets (opcionales):
-#   DATABASE_URL=...
+### Environments
+| Environment | Reglas | Variables |
+|-------------|--------|-----------|
+| `staging` | solo branch `main` | `API_URL`, `NODE_ENV=staging` |
+| `production` | required reviewers (`@colome`) + wait 5 min + solo `main` | `API_URL`, `NODE_ENV=production` |
+| `preview` | sin approval | `API_URL`, `NODE_ENV=preview` |
 
-## Environment: preview
-# Variables:
-#   API_URL=https://mi-cd-pipeline-preview.onrender.com
+### Branch protection (`main`)
+- Require 1 approving review
+- Status checks: `Lint`, `Test`, `Build`
+- Dismiss stale reviews
 
-## Branch protection (main)
-# Require PR reviews (1)
-# Require status checks: Lint, Test, Build (ci.yml)
+### Código
+- Push inicial a `main` (sin secretos; `.env` ignorado)
+
+## Pendiente (necesita tus tokens)
+
+Crea estos **Repository secrets** en  
+https://github.com/colome/CICDgithubActions/settings/secrets/actions
+
+| Secret | Dónde obtenerlo |
+|--------|-----------------|
+| `RENDER_API_KEY` | https://dashboard.render.com/u/settings#api-keys |
+| `RENDER_STAGING_SERVICE_ID` | Dashboard del servicio staging |
+| `RENDER_PRODUCTION_SERVICE_ID` | Dashboard del servicio production |
+| `RENDER_PREVIEW_SERVICE_ID` | Dashboard del servicio preview |
+| `SLACK_WEBHOOK_URL` | Slack App → Incoming Webhooks |
+
+Cuando los tengas, puedes pegármelos (o decirme que los configures tú) y los cargo con `gh secret set`.
+
+### Crear servicios en Render (web)
+1. New → Web Service → conectar repo `colome/CICDgithubActions`
+2. Build: `npm install` · Start: `npm start` · Health: `/health`
+3. Tres servicios (staging / production / preview) o uno y clonar
+4. Copiar cada Service ID a los secrets de arriba
+
+### Actualizar `API_URL` reales
+Cuando Render dé las URLs `*.onrender.com`, actualiza las variables de cada Environment (ahora hay placeholders `mi-cd-pipeline-*.onrender.com`).
