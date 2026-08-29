@@ -25,6 +25,7 @@ jobs:
       url: ${{ vars.API_URL }}
     outputs:
       url: ${{ steps.meta.outputs.url }}
+      ready: ${{ steps.secrets.outputs.ready }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,7 +40,22 @@ jobs:
           echo "- SHA: \`${{ github.event.workflow_run.head_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: $URL" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Check Render secrets
+        id: secrets
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_STAGING_SERVICE_ID }}
+        run: |
+          if [ -z "$RENDER_API_KEY" ] || [ -z "$RENDER_SERVICE_ID" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Faltan RENDER_API_KEY / RENDER_STAGING_SERVICE_ID. Staging deploy omitido."
+            echo "- Estado: **omitido** (secrets pendientes)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy to Render (staging)
+        if: steps.secrets.outputs.ready == 'true'
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_STAGING_SERVICE_ID }}
@@ -48,6 +64,7 @@ jobs:
           ./scripts/render-deploy.sh
 
       - name: Health check
+        if: steps.secrets.outputs.ready == 'true'
         env:
           BASE_URL: ${{ vars.API_URL }}
           RETRIES: "18"
@@ -59,6 +76,7 @@ jobs:
   smoke-tests:
     name: Smoke Tests
     needs: deploy-staging
+    if: needs.deploy-staging.outputs.ready == 'true'
     runs-on: ubuntu-latest
     environment: staging
     steps:
@@ -76,7 +94,7 @@ jobs:
   notify:
     name: Notify Slack
     needs: [deploy-staging, smoke-tests]
-    if: always()
+    if: always() && needs.deploy-staging.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

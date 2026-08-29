@@ -33,8 +33,30 @@ jobs:
       - run: npm test
       - run: npm run build
 
+      - name: Check Render secrets
+        id: secrets
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_PREVIEW_SERVICE_ID }}
+        run: |
+          if [ -z "$RENDER_API_KEY" ] || [ -z "$RENDER_SERVICE_ID" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Faltan secrets RENDER_API_KEY / RENDER_PREVIEW_SERVICE_ID. Preview deploy omitido."
+            {
+              echo "## Preview deploy omitido"
+              echo "Configura repository secrets:"
+              echo "- \`RENDER_API_KEY\`"
+              echo "- \`RENDER_PREVIEW_SERVICE_ID\`"
+              echo ""
+              echo "Guia: docs/github-setup.md"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy preview (Render)
         id: deploy
+        if: steps.secrets.outputs.ready == 'true'
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_PREVIEW_SERVICE_ID }}
@@ -50,12 +72,15 @@ jobs:
           export RETRIES=18
           ./scripts/healthcheck.sh
 
-      - name: Comment preview URL on PR
+      - name: Comment on PR
         uses: actions/github-script@v7
         with:
           script: |
+            const ready = '${{ steps.secrets.outputs.ready }}' === 'true';
             const url = '${{ steps.deploy.outputs.url }}';
-            const body = `## Preview deploy\n\n🔗 **URL:** ${url || '(configura vars.API_URL o PREVIEW_BASE_URL)'}\n\n- PR: #${{ github.event.pull_request.number }}\n- SHA: \`${{ github.sha }}\`\n- Health: \`${url}/health\``;
+            const body = ready
+              ? `## Preview deploy\n\n🔗 **URL:** ${url || '(configura vars.API_URL)'}\n\n- PR: #${{ github.event.pull_request.number }}\n- SHA: \`${{ github.sha }}\`\n- Health: \`${url}/health\``
+              : `## Preview deploy\n\n⏭️ **Omitido:** faltan secrets \`RENDER_API_KEY\` y/o \`RENDER_PREVIEW_SERVICE_ID\`.\n\nConfigura en Settings → Secrets and variables → Actions.\nVer \`docs/github-setup.md\`.`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
